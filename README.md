@@ -1,6 +1,6 @@
 [//]: # (Hello welcome to my project 
   This project is already uploaded to my GitHub Account where I have deployed this project
-  You can find the project here: https://github.com/Kumar-laxmi/Stock-Prediction-System-Application
+  You can find the project here:
 )
 
 <img src="./app/static/image/banner.png" alt="STOCK MARKET PREDICTION">
@@ -138,12 +138,6 @@
 ```bash
   python3 manage.py runserver
 ```
-
-
-## Walkthrough Video:
-
-
-https://user-images.githubusercontent.com/76027425/179440037-bf73c742-c463-434b-a5f9-97b83e4ddb35.mp4
 
 
 ## Output Screen-shots:
