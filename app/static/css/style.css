@@ -1,8 +1,8 @@
 /********** Template CSS **********/
 :root {
-    --primary: #EB1616;
+    --primary: #16ebe0;
     --secondary: #191C24;
-    --light: #6C7293;
+    --light: #b0bbf7;
     --dark: #000000;
 }
 
@@ -205,7 +205,9 @@
 
 .content .navbar .dropdown-item:hover,
 .content .navbar .dropdown-item.active {
+    color: var(--primary);
     background: var(--dark);
+    border-color: var(--primary);
 }
 
 .content .navbar .dropdown-toggle::after {
@@ -286,6 +288,10 @@
 .testimonial-carousel .owl-dot.active {
     background: var(--dark);
     border-color: var(--primary);
+}
+
+.row-color {
+    background-color: #93fbff;
 }
 
 /* Time and Clock */
