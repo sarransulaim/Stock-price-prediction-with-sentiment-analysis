@@ -3,36 +3,59 @@ from django.shortcuts import render
 from django.http import HttpResponse
 from django.template import RequestContext
 
+import plotly.offline as pyo
 from plotly.offline import plot
 import plotly.graph_objects as go
 import plotly.express as px
 from plotly.graph_objs import Scatter
+import twitter as tw
+from plotly.subplots import make_subplots
 
 import pandas as pd
 import numpy as np
 import json
+import math
+import ta
 
 import yfinance as yf
 import datetime as dt
 import qrcode
 
 from .models import Project
+import tensorflow as tf
 
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import r2_score
 from sklearn.linear_model import LinearRegression
 from sklearn import preprocessing, model_selection, svm
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.model_selection import train_test_split
+from sklearn.impute import SimpleImputer
+from tensorflow import keras
+from keras.models import Sequential
+from keras.layers import Dense, LSTM
+from datetime import date
+from ta.volatility import BollingerBands
+from ta.trend import MACD
+from ta.momentum import RSIIndicator
+
+import tweepy
+from textblob import TextBlob
+import matplotlib.pyplot as plt
+import requests
 
 
 
 
 # The Home page when Server loads up
-def index(request):
+def index(request): 
     # ================================================= Left Card Plot =========================================================
     # Here we use yf.download function
     data = yf.download(
         
         # passes the ticker
-        tickers=['AAPL', 'AMZN', 'QCOM', 'META', 'NVDA', 'JPM'],
-        
+        tickers=['AAPL', 'AMZN', 'GOOGL', 'QCOM', 'TSLA', 'META', 'NVDA' ],
+         
         group_by = 'ticker',
         
         threads=True, # Set thread value to true
@@ -55,16 +78,19 @@ def index(request):
                 go.Scatter(x=data['Date'], y=data['AMZN']['Adj Close'], name="AMZN")
             )
     fig_left.add_trace(
+                go.Scatter(x=data['Date'], y=data['GOOGL']['Adj Close'], name="GOOGL")
+            )
+    fig_left.add_trace(
                 go.Scatter(x=data['Date'], y=data['QCOM']['Adj Close'], name="QCOM")
+            )
+    fig_left.add_trace(
+                go.Scatter(x=data['Date'], y=data['TSLA']['Adj Close'], name="TSLA")
             )
     fig_left.add_trace(
                 go.Scatter(x=data['Date'], y=data['META']['Adj Close'], name="META")
             )
     fig_left.add_trace(
                 go.Scatter(x=data['Date'], y=data['NVDA']['Adj Close'], name="NVDA")
-            )
-    fig_left.add_trace(
-                go.Scatter(x=data['Date'], y=data['JPM']['Adj Close'], name="JPM")
             )
     fig_left.update_layout(paper_bgcolor="#14151b", plot_bgcolor="#14151b", font_color="white")
 
@@ -76,18 +102,20 @@ def index(request):
     df1 = yf.download(tickers = 'AAPL', period='1d', interval='1d')
     df2 = yf.download(tickers = 'AMZN', period='1d', interval='1d')
     df3 = yf.download(tickers = 'GOOGL', period='1d', interval='1d')
-    df4 = yf.download(tickers = 'UBER', period='1d', interval='1d')
+    df4 = yf.download(tickers = 'QCOM', period='1d', interval='1d')
     df5 = yf.download(tickers = 'TSLA', period='1d', interval='1d')
-    df6 = yf.download(tickers = 'TWTR', period='1d', interval='1d')
+    df6 = yf.download(tickers = 'META', period='1d', interval='1d')
+    df7 = yf.download(tickers = 'NVDA', period='1d', interval='1d')
 
     df1.insert(0, "Ticker", "AAPL")
     df2.insert(0, "Ticker", "AMZN")
     df3.insert(0, "Ticker", "GOOGL")
-    df4.insert(0, "Ticker", "UBER")
+    df4.insert(0, "Ticker", "QCOM")
     df5.insert(0, "Ticker", "TSLA")
-    df6.insert(0, "Ticker", "TWTR")
+    df6.insert(0, "Ticker", "META")
+    df7.insert(0, "Ticker", "NVDA")
 
-    df = pd.concat([df1, df2, df3, df4, df5, df6], axis=0)
+    df = pd.concat([df1, df2, df3, df4, df5, df6, df7], axis=0)
     df.reset_index(level=0, inplace=True)
     df.columns = ['Date', 'Ticker', 'Open', 'High', 'Low', 'Close', 'Adj_Close', 'Volume']
     convert_dict = {'Date': object}
@@ -126,7 +154,7 @@ def predict(request, ticker_value, number_of_days):
     try:
         # ticker_value = request.POST.get('ticker')
         ticker_value = ticker_value.upper()
-        df = yf.download(tickers = ticker_value, period='1d', interval='1m')
+        df = yf.download(tickers = ticker_value, period='12mo', interval='1d')
         print("Downloaded ticker = {} successfully".format(ticker_value))
     except:
         return render(request, 'API_Down.html', {})
@@ -147,7 +175,7 @@ def predict(request, ticker_value, number_of_days):
     if number_of_days < 0:
         return render(request, 'Negative_Days.html', {})
     
-    if number_of_days > 365:
+    if number_of_days > 600:
         return render(request, 'Overflow_days.html', {})
     
 
@@ -158,7 +186,6 @@ def predict(request, ticker_value, number_of_days):
                 low=df['Low'],
                 close=df['Close'], name = 'market data'))
     fig.update_layout(
-                        title='{} live share price evolution'.format(ticker_value),
                         yaxis_title='Stock Price (USD per Shares)')
     fig.update_xaxes(
     rangeslider_visible=True,
@@ -169,72 +196,261 @@ def predict(request, ticker_value, number_of_days):
             dict(count=1, label="HTD", step="hour", stepmode="todate"),
             dict(count=3, label="3h", step="hour", stepmode="backward"),
             dict(step="all")
-        ])
+        ]),
         )
     )
-    fig.update_layout(paper_bgcolor="#14151b", plot_bgcolor="#14151b", font_color="white")
-    plot_div = plot(fig, auto_open=False, output_type='div')
+    fig.update_layout(paper_bgcolor="#14151b", plot_bgcolor="#14151b", font_color="#16ebe0")
+    plot_div_pred = plot(fig, auto_open=False, output_type='div')
+
+
+        #====================================sentiment sell meter===================================
+
+
+    # Set up the News API endpoint and API key
+    NEWS_API_ENDPOINT = 'https://newsapi.org/v2/everything'
+    NEWS_API_KEY = '961de89c2c394a1283933745e17b2e4f'
+
+    # Define the parameters for the API request
+    params = {
+        'q': ticker_value, # Change to the stock symbol you want to analyze
+        'pageSize': 100,
+        'apiKey': NEWS_API_KEY
+    }
+
+    # Make the API request and get the response
+    response = requests.get(NEWS_API_ENDPOINT, params=params).json()
+
+    # Extract the article titles and descriptions
+    titles = [article['title'] for article in response['articles']]
+    descriptions = [article['description'] for article in response['articles']]
+    
+    df_news = pd.DataFrame({'Title': titles, 'Description': descriptions})
+    df_news.to_csv('app/Data/news.csv', index=False)
+
+    # Initialize the sentiment scores
+    positive_sentiment_score = 0
+    negative_sentiment_score = 0
+    neutral_sentiment_score = 0
+
+    # Iterate over each article in the response
+    for article in response['articles']:
+        # Get the article's description
+        description = article['description']
+    
+        # Use TextBlob to perform sentiment analysis on the article's description
+        blob = TextBlob(description)
+        sentiment_score = blob.sentiment.polarity
+    
+        # Categorize the sentiment score
+        if sentiment_score > 0:
+            positive_sentiment_score += 1
+        elif sentiment_score < 0:
+            negative_sentiment_score += 1
+        else:
+            neutral_sentiment_score += 1
+    
+    print(f'{params["q"]} - Positive: {positive_sentiment_score}, Negative: {negative_sentiment_score}, Neutral: {neutral_sentiment_score}')
+
+    sentiment_df = pd.DataFrame({'Positive': [positive_sentiment_score],
+                                 'Negative': [negative_sentiment_score],
+                                 'Neutral': [neutral_sentiment_score]})
+    
+    sentiment_df.to_csv('app/Data/sentiment.csv', index=False)
 
 
 
     # ========================================== Machine Learning ==========================================
 
-
     try:
-        df_ml = yf.download(tickers = ticker_value, period='3mo', interval='1h')
+        df_ml = yf.download(tickers = ticker_value, start='2015-01-01')
     except:
-        ticker_value = 'AAPL'
-        df_ml = yf.download(tickers = ticker_value, period='3mo', interval='1m')
+        ticker_value = 'AAPL',
+        df_ml = yf.download(tickers = ticker_value, start='2015-01-01')
+    
+    # Save the data to a CSV file
+    df_ml.to_csv('app/Data/stock_data.csv')
 
-    # Fetching ticker values from Yahoo Finance API 
+
+    # Load the stock data from the CSV file
+    df_ml = pd.read_csv('app/Data/stock_data.csv', index_col=0)
+
+    
+
     df_ml = df_ml[['Adj Close']]
     forecast_out = int(number_of_days)
     df_ml['Prediction'] = df_ml[['Adj Close']].shift(-forecast_out)
+
+    print(df_ml.shape)
+
+    # Load the sentiment data into a pandas DataFrame
+    df_sentiment = sentiment_df
+
+    # Merge the sentiment data with the stock price data
+    df = pd.concat([df_ml['Prediction'], df_sentiment], axis=1)
+
+    # Drop any missing or NaN values
+    df.dropna(inplace=True)
+
+    print(df.shape)
+
+    print(df.isnull().sum())
+
     # Splitting data for Test and Train
-    X = np.array(df_ml.drop(['Prediction'],1))
+    X = np.array(df_ml.drop(['Prediction'], 1))
     X = preprocessing.scale(X)
-    X_forecast = X[-forecast_out:]
+    print(X.shape)
     X = X[:-forecast_out]
+    X_forecast = X[-forecast_out:]
     y = np.array(df_ml['Prediction'])
     y = y[:-forecast_out]
-    X_train, X_test, y_train, y_test = model_selection.train_test_split(X, y, test_size = 0.2)
+    X_train, X_test, y_train, y_test, = model_selection.train_test_split(X, y, test_size = 0.2)
+    print(np.isnan(X).any())
+
     # Applying Linear Regression
     clf = LinearRegression()
-    clf.fit(X_train,y_train)
+    clf.fit(X_train, y_train)
+
     # Prediction Score
     confidence = clf.score(X_test, y_test)
+
     # Predicting for 'n' days stock data
     forecast_prediction = clf.predict(X_forecast)
     forecast = forecast_prediction.tolist()
 
 
-    # ========================================== Plotting predicted data ======================================
+    #==========================================PLOTTING=====================================
+    pred_dict = {"Date": [], "Prediction": []}
+    for i in range(0, len(forecast)):
+        pred_dict["Date"].append(dt.datetime.today() + dt.timedelta(days=i))
+        pred_dict["Prediction"].append(forecast[i])
+
+    pred_df = pd.DataFrame(pred_dict)
+    pred_fig = go.Figure([go.Scatter(x=pred_df['Date'], y=pred_df['Prediction'])])
+    pred_fig.update_xaxes(rangeslider_visible=True)
+    pred_fig.update_layout(paper_bgcolor="#14151b", plot_bgcolor="#14151b", font_color="white", xaxis_title="With Sentiment Analysis", yaxis_title="Adj Close Price USD ($)", legend=dict(x=0, y=1, bgcolor='rgba(0,0,0,0)'))
+    plot_div = plot(pred_fig, auto_open=False, output_type='div')
+
+    # JavaScript function to trigger plot resize
+    js_code = """
+    function resizePlot() {
+        if (typeof Plotly !== 'undefined') {
+            Plotly.Plots.resize(document.getElementById('plot_div'));
+        }
+    }
+
+    // Wait for the sidebar to be fully closed before triggering the resize event
+    document.getElementById('sidebar_close_button').addEventListener('click', function() {
+        setTimeout(resizePlot, 300); // Adjust the delay if needed
+    });
+    """
+
+    # ============================= MACHINE LEARNING ==========================
+        # Load the stock data from the CSV file
+    df_ml = pd.read_csv('app/Data/stock_data.csv', index_col=0)
+
+    df_ml = df_ml[['Adj Close']]
+    forecast_out = int(number_of_days)
+    df_ml['Prediction'] = df_ml[['Adj Close']].shift(-forecast_out)
+
+    # Splitting data for Test and Train
+    X = np.array(df_ml.drop(['Prediction'], 1))
+    X = preprocessing.scale(X)
+    print(X.shape)
+    X = X[:-forecast_out]
+    X_forecast = X[-forecast_out:]
+    y = np.array(df_ml['Prediction'])
+    y = y[:-forecast_out]
+    X_train, X_test, y_train, y_test, = model_selection.train_test_split(X, y, test_size = 0.2)
+    print(np.isnan(X).any())
+
+    # Applying Linear Regression
+    clf = LinearRegression()
+    clf.fit(X_train, y_train)
+
+    # Prediction Score
+    confidence = clf.score(X_test, y_test)
+
+    # Predicting for 'n' days stock data
+    forecast_prediction = clf.predict(X_forecast)
+    forecast = forecast_prediction.tolist()
+
+    # ============================= Plotting predicted data for linear regression and sentiment analysis ==========================
 
 
     pred_dict = {"Date": [], "Prediction": []}
     for i in range(0, len(forecast)):
         pred_dict["Date"].append(dt.datetime.today() + dt.timedelta(days=i))
         pred_dict["Prediction"].append(forecast[i])
-    
+
     pred_df = pd.DataFrame(pred_dict)
-    pred_fig = go.Figure([go.Scatter(x=pred_df['Date'], y=pred_df['Prediction'])])
+    pred_fig = go.Figure([go.Scatter(x=pred_df['Date'], y=pred_df['Prediction'], line=dict(color='red'))])
     pred_fig.update_xaxes(rangeslider_visible=True)
-    pred_fig.update_layout(paper_bgcolor="#14151b", plot_bgcolor="#14151b", font_color="white")
-    plot_div_pred = plot(pred_fig, auto_open=False, output_type='div')
+    pred_fig.update_layout(paper_bgcolor="#14151b", plot_bgcolor="#14151b", font_color="white", xaxis_title="Without Sentiment Analysis", yaxis_title="Adj Close Price USD ($)", legend=dict(x=0, y=1, bgcolor='rgba(0,0,0,0)'))
+    plot_div_pred2 = plot(pred_fig, auto_open=False, output_type='div')
+
+
+
+    # ============================= lstm ==========================
+
+    # ============================= lstm ==========================
+
+
+    # Create a Pie chart using Plotly
+    labels = ['Positive', 'Negative', 'Neutral']
+    values = [positive_sentiment_score, negative_sentiment_score, neutral_sentiment_score]
+    colors = ['#2CA02C', '#D62728', '#9467BD']
+
+    fig = go.Figure(data=[go.Pie(labels=labels, values=values, hole=.3)])
+    fig.update_traces(marker=dict(colors=colors))
+    fig.update_layout(title=f'Sentiment analysis for {ticker_value}',
+                      plot_bgcolor='#14151b',
+                      paper_bgcolor='#14151b',
+                      font=dict(color='white'))    
+    plot_div_predq = plot(fig, auto_open=False, output_type='div')
+
+
+    fig = go.Figure()
+
+    # Add a table of the article titles and descriptions
+    fig.add_trace(go.Table(
+        header=dict(
+            values=['Title', 'Description'],
+            fill_color='#14151b',
+            font=dict(color='white', size=16),
+            align=['left', 'center'],
+            height=40
+        ),
+        cells=dict(
+            values=[titles, descriptions],
+            fill_color='#14151b',
+            font=dict(color='white', size=12),
+            align=['left', 'center'],
+            height=60
+        )
+    ))
+
+    # Update the layout with the background color
+    fig.update_layout(
+        title=f'{params["q"]} News Headlines',
+        plot_bgcolor='#14151b',
+        paper_bgcolor='#14151b',
+        font=dict(color='white', size=16)
+    )
+
+    # Generate the HTML code for the plot
+    plot_div_predqh = plot(fig, auto_open=False, output_type='div')
+
 
     # ========================================== Display Ticker Info ==========================================
 
     ticker = pd.read_csv('app/Data/Tickers.csv')
     to_search = ticker_value
-    ticker.columns = ['Symbol', 'Name', 'Last_Sale', 'Net_Change', 'Percent_Change', 'Market_Cap',
-                    'Country', 'IPO_Year', 'Volume', 'Sector', 'Industry']
+    ticker.columns = ['Symbol', 'Name', 'Market_Cap',
+                'Country', 'IPO_Year', 'Volume', 'Sector', 'Industry']
     for i in range(0,ticker.shape[0]):
         if ticker.Symbol[i] == to_search:
             Symbol = ticker.Symbol[i]
             Name = ticker.Name[i]
-            Last_Sale = ticker.Last_Sale[i]
-            Net_Change = ticker.Net_Change[i]
-            Percent_Change = ticker.Percent_Change[i]
             Market_Cap = ticker.Market_Cap[i]
             Country = ticker.Country[i]
             IPO_Year = ticker.IPO_Year[i]
@@ -244,19 +460,17 @@ def predict(request, ticker_value, number_of_days):
             break
 
     # ========================================== Page Render section ==========================================
-    
 
-    return render(request, "result.html", context={ 'plot_div': plot_div, 
+    return render(request, "result.html", context={ 'plot_div': plot_div,
                                                     'confidence' : confidence,
                                                     'forecast': forecast,
                                                     'ticker_value':ticker_value,
                                                     'number_of_days':number_of_days,
                                                     'plot_div_pred':plot_div_pred,
+                                                    'plot_div_predq':plot_div_predq,
+                                                    'plot_div_predqh':plot_div_predqh,
                                                     'Symbol':Symbol,
                                                     'Name':Name,
-                                                    'Last_Sale':Last_Sale,
-                                                    'Net_Change':Net_Change,
-                                                    'Percent_Change':Percent_Change,
                                                     'Market_Cap':Market_Cap,
                                                     'Country':Country,
                                                     'IPO_Year':IPO_Year,
@@ -264,3 +478,4 @@ def predict(request, ticker_value, number_of_days):
                                                     'Sector':Sector,
                                                     'Industry':Industry,
                                                     })
+    
